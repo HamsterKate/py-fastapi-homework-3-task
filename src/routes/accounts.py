@@ -1,11 +1,10 @@
 from datetime import datetime, timezone
 from typing import cast
 
-from fastapi import APIRouter, Depends, status, HTTPException, Body
-from sqlalchemy import select, delete
+from fastapi import APIRouter, Depends, status, HTTPException
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session, joinedload
 
 from config import get_jwt_auth_manager, get_settings, BaseAppSettings
 from database import (
@@ -15,13 +14,20 @@ from database import (
     UserGroupEnum,
     ActivationTokenModel,
     PasswordResetTokenModel,
-    RefreshTokenModel
+    RefreshTokenModel,
 )
-from exceptions import BaseSecurityError, TokenExpiredError, InvalidTokenError
+from exceptions import TokenExpiredError, InvalidTokenError
 from schemas.accounts import (
-    UserCreateResponseSchema, UserCreateSchema, MessageResponseSchema, UserActivateRequestSchema,
-    PasswordResetRequestSchema, UserLoginRequestSchema, UserLoginResponseSchema, TokenRefreshRequestSchema,
-    TokenRefreshResponseSchema, PasswordResetCompleteSchema,
+    UserCreateResponseSchema,
+    UserCreateSchema,
+    MessageResponseSchema,
+    UserActivateRequestSchema,
+    PasswordResetRequestSchema,
+    UserLoginRequestSchema,
+    UserLoginResponseSchema,
+    TokenRefreshRequestSchema,
+    TokenRefreshResponseSchema,
+    PasswordResetCompleteSchema,
 )
 from security.interfaces import JWTAuthManagerInterface
 
@@ -46,16 +52,12 @@ async def user_registration(
     db: AsyncSession = Depends(get_db),
 ) -> UserModel:
     result = await db.execute(
-        select(UserGroupModel).where(
-            UserGroupModel.name == UserGroupEnum.USER
-        )
+        select(UserGroupModel).where(UserGroupModel.name == UserGroupEnum.USER)
     )
     user_group = result.scalar_one()
 
     result = await db.execute(
-        select(UserModel).where(
-            UserModel.email == user_data.email
-        )
+        select(UserModel).where(UserModel.email == user_data.email)
     )
     existing_user = result.scalar_one_or_none()
 
@@ -96,13 +98,11 @@ async def user_registration(
     status_code=status.HTTP_200_OK,
 )
 async def activate_user(
-        user_data: UserActivateRequestSchema,
-        db: AsyncSession = Depends(get_db),
+    user_data: UserActivateRequestSchema,
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     result = await db.execute(
-        select(UserModel).where(
-            UserModel.email == user_data.email
-        )
+        select(UserModel).where(UserModel.email == user_data.email)
     )
     user = result.scalar_one_or_none()
 
@@ -163,9 +163,7 @@ async def request_password_reset(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     result = await db.execute(
-        select(UserModel).where(
-            UserModel.email == user_data.email
-        )
+        select(UserModel).where(UserModel.email == user_data.email)
     )
     user = result.scalar_one_or_none()
 
@@ -184,9 +182,7 @@ async def request_password_reset(
     if existing_token:
         await db.delete(existing_token)
 
-    reset_token = PasswordResetTokenModel(
-        user_id=cast(int, user.id)
-    )
+    reset_token = PasswordResetTokenModel(user_id=cast(int, user.id))
     db.add(reset_token)
 
     try:
@@ -213,9 +209,7 @@ async def complete_password_reset(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     result = await db.execute(
-        select(UserModel).where(
-            UserModel.email == user_data.email
-        )
+        select(UserModel).where(UserModel.email == user_data.email)
     )
     user = result.scalar_one_or_none()
 
@@ -273,15 +267,13 @@ async def complete_password_reset(
             detail="An error occurred while resetting the password.",
         )
 
-    return {
-        "message": "Password reset successfully."
-    }
+    return {"message": "Password reset successfully."}
 
 
 @router.post(
     "/login/",
     response_model=UserLoginResponseSchema,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_200_OK,
 )
 async def user_login(
     user_data: UserLoginRequestSchema,
@@ -290,9 +282,7 @@ async def user_login(
     settings: BaseAppSettings = Depends(get_settings),
 ) -> dict:
     result = await db.execute(
-        select(UserModel).where(
-            UserModel.email == user_data.email
-        )
+        select(UserModel).where(UserModel.email == user_data.email)
     )
     user = result.scalar_one_or_none()
 
@@ -310,13 +300,9 @@ async def user_login(
 
     user_id = cast(int, user.id)
 
-    access_token = jwt_manager.create_access_token(
-        data={"user_id": user_id}
-    )
+    access_token = jwt_manager.create_access_token(data={"user_id": user_id})
 
-    refresh_token = jwt_manager.create_refresh_token(
-        data={"user_id": user_id}
-    )
+    refresh_token = jwt_manager.create_refresh_token(data={"user_id": user_id})
 
     refresh_token_record = RefreshTokenModel.create(
         user_id=user_id,
@@ -353,9 +339,7 @@ async def refresh_access_token(
     jwt_manager: JWTAuthManagerInterface = Depends(get_jwt_auth_manager),
 ) -> dict:
     try:
-        payload = jwt_manager.decode_refresh_token(
-            token_data.refresh_token
-        )
+        payload = jwt_manager.decode_refresh_token(token_data.refresh_token)
     except TokenExpiredError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -382,11 +366,13 @@ async def refresh_access_token(
 
     user_id = cast(int, payload["user_id"])
 
-    result = await db.execute(
-        select(UserModel).where(
-            UserModel.id == user_id
+    if refresh_token.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token does not belong to the user.",
         )
-    )
+
+    result = await db.execute(select(UserModel).where(UserModel.id == user_id))
     user = result.scalar_one_or_none()
 
     if not user:
@@ -395,9 +381,7 @@ async def refresh_access_token(
             detail="User not found.",
         )
 
-    access_token = jwt_manager.create_access_token(
-        data={"user_id": user_id}
-    )
+    access_token = jwt_manager.create_access_token(data={"user_id": user_id})
 
     return {
         "access_token": access_token,
